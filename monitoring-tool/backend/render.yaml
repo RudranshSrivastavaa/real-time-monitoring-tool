@@ -1,0 +1,28 @@
+# Render configuration for backend deployment
+services:
+  - type: web
+    name: monitoring-tool-backend
+    env: go
+    buildCommand: go build -o monitoring-tool main.go
+    startCommand: ./monitoring-tool
+    envVars:
+      - key: MONGODB_URI
+        sync: false  # Set this manually in Render dashboard
+      - key: DATABASE_NAME
+        value: realtime_monitor
+      - key: PORT
+        value: 8080
+      - key: HOST
+        value: 0.0.0.0
+      - key: ENVIRONMENT
+        value: production
+      - key: ALLOWED_ORIGINS
+        value: https://your-frontend-app.vercel.app
+      - key: DEFAULT_INTERVAL
+        value: 30
+      - key: DEFAULT_TIMEOUT
+        value: 10
+      - key: MAX_CONCURRENT_CHECKS
+        value: 100
+      - key: METRICS_RETENTION_DAYS
+        value: 30

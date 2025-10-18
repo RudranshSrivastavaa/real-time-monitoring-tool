@@ -9,6 +9,8 @@ import (
 	"time"
 	"github.com/gorilla/websocket"
 	"monitoring-tool/models"
+	"strings"
+	"os"
 )
 
 // WebSocketHub manages all WebSocket connections
@@ -45,14 +47,31 @@ type WebSocketClient struct {
 }
 
 // WebSocket upgrader configuration
+// Update Upgrader for production
 var Upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-	CheckOrigin: func(r *http.Request) bool {
-		// Allow connections from React development server
-		origin := r.Header.Get("Origin")
-		return origin == "http://localhost:3000" || origin == ""
-	},
+    ReadBufferSize:  1024,
+    WriteBufferSize: 1024,
+    CheckOrigin: func(r *http.Request) bool {
+        origin := r.Header.Get("Origin")
+        
+        // Get allowed origins from environment
+        allowedOriginsStr := os.Getenv("ALLOWED_ORIGINS")
+        if allowedOriginsStr == "" {
+            // Development fallback
+            return origin == "http://localhost:3000" || origin == ""
+        }
+        
+        allowedOrigins := strings.Split(allowedOriginsStr, ",")
+        for _, allowed := range allowedOrigins {
+            if strings.TrimSpace(allowed) == origin {
+                return true
+            }
+        }
+        
+        return false
+    },
+    // Add compression for production
+    EnableCompression: true,
 }
 
 // NewWebSocketHub creates a new WebSocket hub
@@ -174,35 +193,37 @@ func NewWebSocketClient(conn *websocket.Conn, hub *WebSocketHub, clientID string
 
 // WritePump handles writing messages to the WebSocket connection
 func (c *WebSocketClient) WritePump() {
-	defer func() {
-		c.Conn.Close()
-	}()
-for {
-    select {
-    case message, ok := <-c.Send:
-        if !ok {
-            c.Conn.WriteMessage(websocket.CloseMessage, []byte{})
-            return
-        }
+    ticker := time.NewTicker(54 * time.Second)
+    defer func() {
+        ticker.Stop()
+        c.Conn.Close()
+    }()
 
-        // Set write deadline
-        c.Conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-        
-        // Send JSON message
-        if err := c.Conn.WriteJSON(message); err != nil {
-            log.Printf("WebSocket write error: %v", err)
-            return
-        }
-        
-    case <-time.After(60 * time.Second):
-        // Ping to keep connection alive
-        if err := c.Conn.WriteMessage(websocket.PingMessage, nil); err != nil {
-            log.Printf("WebSocket ping error: %v", err)
-            return
+    for {
+        select {
+        case message, ok := <-c.Send:
+            if !ok {
+                c.Conn.WriteMessage(websocket.CloseMessage, []byte{})
+                return
+            }
+
+            c.Conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+            
+            if err := c.Conn.WriteJSON(message); err != nil {
+                // Only log in development
+                if os.Getenv("GIN_MODE") == "debug" {
+                    log.Printf("WebSocket write error: %v", err)
+                }
+                return
+            }
+            
+        case <-ticker.C:
+            c.Conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+            if err := c.Conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+                return
+            }
         }
     }
-}
-
 }
 
 // ReadPump handles reading messages from the WebSocket connection

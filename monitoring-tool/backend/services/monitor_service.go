@@ -23,17 +23,26 @@ type MonitorService struct {
 	httpClient  *http.Client
 	activeJobs  map[string]chan bool // for stopping individual monitor jobs
 	jobsMutex   sync.RWMutex
+	rateLimiter *time.Ticker
+    semaphore   chan struct{}
 }
 
 // NewMonitorService creates a new monitor service
-func NewMonitorService(db *database.MongoDB) *MonitorService {
-	return &MonitorService{
-		db: db,
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-		},
-		activeJobs: make(map[string]chan bool),
-	}
+func NewMonitorService(db *database.MongoDB, maxConcurrent int) *MonitorService {
+    return &MonitorService{
+        db: db,
+        httpClient: &http.Client{
+            Timeout: 30 * time.Second,
+            Transport: &http.Transport{
+                MaxIdleConns:        100,
+                MaxIdleConnsPerHost: 10,
+                IdleConnTimeout:     90 * time.Second,
+                DisableKeepAlives:   false,
+            },
+        },
+        activeJobs:  make(map[string]chan bool),
+        semaphore:   make(chan struct{}, maxConcurrent),
+    }
 }
 
 // CreateMonitor adds a new monitor to the database
@@ -198,6 +207,9 @@ func (ms *MonitorService) stopMonitorJob(monitorID string) {
 
 // checkEndpoint performs a health check on an endpoint
 func (ms *MonitorService) checkEndpoint(monitor models.Monitor, wsHub *WebSocketHub) {
+
+	 ms.semaphore <- struct{}{}
+    defer func() { <-ms.semaphore }()
 	startTime := time.Now()
 
 	// Create HTTP request

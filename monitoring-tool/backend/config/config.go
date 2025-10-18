@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"time"
+	"strings"
 )
 
 // Config holds all configuration for the application
@@ -33,6 +34,17 @@ type Config struct {
 	
 	// CORS configuration
 	AllowedOrigins []string
+
+	 // Production settings
+    TrustedProxies []string
+    ReadTimeout    time.Duration
+    WriteTimeout   time.Duration
+    IdleTimeout    time.Duration
+    
+    // Security
+    EnableHTTPS    bool
+    CertFile       string
+    KeyFile        string
 }
 
 // LoadConfig loads configuration from environment variables with defaults
@@ -58,12 +70,29 @@ func LoadConfig() *Config {
 		MaxConcurrentChecks:  getEnvAsInt("MAX_CONCURRENT_CHECKS", 100),
 		MetricsRetentionDays: getEnvAsInt("METRICS_RETENTION_DAYS", 30),
 
-		// CORS
-		AllowedOrigins: []string{
-			getEnvOrDefault("FRONTEND_URL", "http://localhost:3000"),
-			"http://localhost:3001", // Alternative frontend port
-		},
+		 // Production settings
+        TrustedProxies: getEnvAsStringSlice("TRUSTED_PROXIES", []string{}),
+        ReadTimeout:    time.Duration(getEnvAsInt("READ_TIMEOUT", 30)) * time.Second,
+        WriteTimeout:   time.Duration(getEnvAsInt("WRITE_TIMEOUT", 30)) * time.Second,
+        IdleTimeout:    time.Duration(getEnvAsInt("IDLE_TIMEOUT", 120)) * time.Second,
+        
+        // Security
+        EnableHTTPS:    getEnvAsBool("ENABLE_HTTPS", false),
+        CertFile:       getEnvOrDefault("CERT_FILE", ""),
+        KeyFile:        getEnvOrDefault("KEY_FILE", ""),
+        
+        // Update CORS for production
+        AllowedOrigins: getEnvAsStringSlice("ALLOWED_ORIGINS", []string{
+            getEnvOrDefault("FRONTEND_URL", "http://localhost:3000"),
+        }),
 	}
+}
+
+func getEnvAsStringSlice(key string, defaultValue []string) []string {
+    if valueStr := os.Getenv(key); valueStr != "" {
+        return strings.Split(valueStr, ",")
+    }
+    return defaultValue
 }
 
 // GetServerAddress returns the full server address
@@ -104,7 +133,17 @@ func (c *Config) Validate() error {
 		log.Printf("Warning: DEFAULT_TIMEOUT (%ds) should be less than DEFAULT_INTERVAL (%ds)", c.DefaultTimeout, c.DefaultInterval)
 	}
 	
-	return nil
+	  if c.IsProduction() {
+        if c.EnableHTTPS && (c.CertFile == "" || c.KeyFile == "") {
+            return fmt.Errorf("HTTPS enabled but certificate files not provided")
+        }
+        
+        if len(c.AllowedOrigins) == 0 {
+            log.Println("Warning: No CORS origins configured for production")
+        }
+    }
+    
+    return nil
 }
 
 // LogConfig logs the current configuration (without sensitive data)

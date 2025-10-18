@@ -5,11 +5,12 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
-	
+
 	"monitoring-tool/config"
 )
 
@@ -20,12 +21,32 @@ type MongoDB struct {
 }
 
 // InitMongoDB initializes MongoDB connection with configuration
+// Update InitMongoDB for production
 func InitMongoDB(cfg *config.Config) (*MongoDB, error) {
-	// Set client options
-	clientOptions := options.Client().ApplyURI(cfg.MongodbURI)
+	clientOptions := options.Client().
+		ApplyURI(cfg.MongodbURI).
+		SetMaxPoolSize(100).
+		SetMinPoolSize(10).
+		SetMaxConnIdleTime(30 * time.Second).
+		SetServerSelectionTimeout(30 * time.Second). // Increased for Atlas
+		SetConnectTimeout(30 * time.Second).         // Increased for Atlas
+		SetSocketTimeout(30 * time.Second)           // Added for Atlas
 
-	// Connect to MongoDB
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// Add retry writes and reads for production and Atlas
+	if cfg.IsProduction() || isAtlasURI(cfg.MongodbURI) {
+		clientOptions.SetRetryWrites(true).SetRetryReads(true)
+		// Atlas-specific optimizations
+		clientOptions.SetHeartbeatInterval(10 * time.Second)
+		clientOptions.SetLocalThreshold(15 * time.Second)
+	}
+
+	// Increase timeout for Atlas connections
+	timeout := 30 * time.Second
+	if isAtlasURI(cfg.MongodbURI) {
+		timeout = 60 * time.Second // Longer timeout for Atlas
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	client, err := mongo.Connect(ctx, clientOptions)
@@ -33,20 +54,40 @@ func InitMongoDB(cfg *config.Config) (*MongoDB, error) {
 		return nil, fmt.Errorf("failed to connect to MongoDB: %v", err)
 	}
 
-	// Test the connection
-	err = client.Ping(ctx, nil)
+	// Test the connection with retries for Atlas
+	maxRetries := 3
+	if isAtlasURI(cfg.MongodbURI) {
+		maxRetries = 5 // More retries for Atlas
+	}
+
+	for i := 0; i < maxRetries; i++ {
+		err = client.Ping(ctx, nil)
+		if err == nil {
+			break
+		}
+		if i < maxRetries-1 {
+			log.Printf("MongoDB ping attempt %d failed, retrying in 5 seconds...", i+1)
+			time.Sleep(5 * time.Second)
+		}
+	}
+
 	if err != nil {
-		return nil, fmt.Errorf("failed to ping MongoDB: %v", err)
+		return nil, fmt.Errorf("failed to ping MongoDB after %d attempts: %v", maxRetries, err)
 	}
 
 	database := client.Database(cfg.DatabaseName)
 
-	// Create indexes for better performance
+	// Create indexes
 	if err := createIndexes(database); err != nil {
 		log.Printf("Warning: Failed to create indexes: %v", err)
 	}
 
-	log.Printf("✅ Connected to MongoDB: %s (database: %s)", cfg.MongodbURI, cfg.DatabaseName)
+	// Mask URI for production logging
+	maskedURI := cfg.MongodbURI
+	if cfg.IsProduction() {
+		maskedURI = "mongodb://***:***@[host]/[database]"
+	}
+	log.Printf("✅ Connected to MongoDB: %s (database: %s)", maskedURI, cfg.DatabaseName)
 
 	return &MongoDB{
 		Client:   client,
@@ -123,6 +164,11 @@ const (
 func (m *MongoDB) Health() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	
+
 	return m.Client.Ping(ctx, nil)
+}
+
+// isAtlasURI checks if the URI is for MongoDB Atlas
+func isAtlasURI(uri string) bool {
+	return strings.Contains(uri, "mongodb.net") || strings.Contains(uri, "mongodb+srv://")
 }
