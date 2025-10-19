@@ -55,21 +55,6 @@ cd monitoring-tool
 ./stop.sh
 ```
 
-That's it! No Docker, no complex configurations - just simple scripts to get you started.
-
-## 🌐 Deploy to Cloud (Recommended for College Projects)
-
-For a professional deployment that's perfect for college presentations:
-
-### Option 1: Render + Vercel (Free Hosting)
-- **Backend**: Deploy to Render (free Go hosting)
-- **Frontend**: Deploy to Vercel (free React hosting)  
-- **Database**: Use MongoDB Atlas (free cloud database)
-
-See [RENDER_VERCEL_DEPLOYMENT.md](./RENDER_VERCEL_DEPLOYMENT.md) for detailed steps.
-
-### Option 2: Local Development
-Use the simple scripts above for local development and testing.
 
 ## 📖 API Documentation
 
