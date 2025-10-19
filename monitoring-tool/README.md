@@ -1,6 +1,6 @@
 # Real-time Monitoring Tool
 
-A simple real-time monitoring solution for APIs and web services - Perfect for college projects!
+A simple real-time monitoring solution for APIs and web services
 
 ## ✨ Features
 
